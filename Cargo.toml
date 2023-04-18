@@ -17,7 +17,16 @@ pio = ["esp-idf-sys/pio"]
 
 [dependencies]
 esp-idf-sys = { version = "0.32.1", features = ["binstart"] }
- 
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components"]
+bindings_header = "src/bindings.h"
+
+#[package.metadata.esp-idf-sys]
+#esp_idf_version = "branch:release/v4.4"
+#esp_idf_tools_install_dir = "global"
+#esp_idf_sdkconfig_defaults = ["sdkconfig.defaults"]
+#esp_idf_components = ["esp_wifi", "spiffs", "vfs", "esp_http_server", "bootloader", "esp_adc_cal", "hal", "esp_websocket_client"]
 
 esp-idf-hal = { version = "0.40.1", features = [
     "default",
