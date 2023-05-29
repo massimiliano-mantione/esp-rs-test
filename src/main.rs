@@ -1,8 +1,8 @@
 use esp_idf_sys::{
     self as _, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
-    camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY,
+    camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_grab_mode_t_CAMERA_GRAB_LATEST,
     framesize_t_FRAMESIZE_QQVGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
-    pixformat_t_PIXFORMAT_JPEG, ESP_OK,
+    pixformat_t_PIXFORMAT_YUV422, timeval, ESP_OK,
 }; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
 use esp_idf_sys::{
@@ -27,6 +27,10 @@ const CAMERA_Y2_GPIO_NUM: i32 = 11;
 const CAMERA_VSYNC_GPIO_NUM: i32 = 6;
 const CAMERA_HREF_GPIO_NUM: i32 = 7;
 const CAMERA_PCLK_GPIO_NUM: i32 = 13;
+
+fn timeval_usec(t: timeval) -> u64 {
+    (t.tv_sec as u64 * 1000000) + (t.tv_usec as u64)
+}
 
 fn main() {
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -53,12 +57,12 @@ fn main() {
         xclk_freq_hz: 20000000,
         ledc_timer: ledc_timer_t_LEDC_TIMER_0,
         ledc_channel: ledc_channel_t_LEDC_CHANNEL_0,
-        pixel_format: pixformat_t_PIXFORMAT_JPEG,
+        pixel_format: pixformat_t_PIXFORMAT_YUV422,
         frame_size: framesize_t_FRAMESIZE_QQVGA,
         jpeg_quality: 12,
-        fb_count: 1,
+        fb_count: 3,
         fb_location: camera_fb_location_t_CAMERA_FB_IN_PSRAM,
-        grab_mode: camera_grab_mode_t_CAMERA_GRAB_WHEN_EMPTY,
+        grab_mode: camera_grab_mode_t_CAMERA_GRAB_LATEST,
         sccb_i2c_port: Default::default(),
         __bindgen_anon_1: camera_config_t__bindgen_ty_1 {
             pin_sscb_sda: CAMERA_SIOD_GPIO_NUM,
@@ -77,18 +81,35 @@ fn main() {
 
         let _s = esp_camera_sensor_get();
 
-        let fb = esp_camera_fb_get();
-        match fb.as_ref() {
-            Some(fb) => {
-                println!("fb w {} h {} len {}", fb.width, fb.height, fb.len);
+        let mut previous_t = 0;
+        let mut skipped = 0;
+
+        for _ in 0..1000 {
+            let fb = esp_camera_fb_get();
+            match fb.as_ref() {
+                Some(fb) => {
+                    let t = timeval_usec(fb.timestamp);
+
+                    if t != previous_t {
+                        let dt = t - previous_t;
+                        previous_t = t;
+                        println!(
+                            "fb w {} h {} len {} dt {} (skipped {})",
+                            fb.width, fb.height, fb.len, dt, skipped
+                        );
+                        skipped = 0;
+                    } else {
+                        skipped += 1;
+                    }
+                }
+                None => {
+                    println!("esp_camera_fb_get failed");
+                    return;
+                }
             }
-            None => {
-                println!("esp_camera_fb_get failed");
-                return;
-            }
+            esp_camera_fb_return(fb);
         }
 
-        esp_camera_fb_return(fb);
         esp_camera_deinit();
     }
 
