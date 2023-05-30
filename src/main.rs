@@ -83,21 +83,40 @@ fn main() {
 
         let mut previous_t = 0;
         let mut skipped = 0;
+        let mut reported_t = 0;
+        let mut reported_frames = 0;
+        const REPORT_DT_USEC: u64 = 5000000;
 
         for _ in 0..1000 {
             let fb = esp_camera_fb_get();
             match fb.as_ref() {
                 Some(fb) => {
                     let t = timeval_usec(fb.timestamp);
+                    reported_frames += 1;
 
                     if t != previous_t {
-                        let dt = t - previous_t;
                         previous_t = t;
-                        println!(
-                            "fb w {} h {} len {} dt {} (skipped {})",
-                            fb.width, fb.height, fb.len, dt, skipped
-                        );
-                        skipped = 0;
+
+                        let dt = t - reported_t;
+                        if dt >= REPORT_DT_USEC {
+                            reported_t = t;
+
+                            let (frame_dt_avg, fr) = if dt > 0 {
+                                (
+                                    dt / reported_frames,
+                                    1000000.0 / ((dt / reported_frames) as f32),
+                                )
+                            } else {
+                                (0, 0.0)
+                            };
+                            println!(
+                                "skipped {} count {} dt {} (fr {})",
+                                skipped, reported_frames, frame_dt_avg, fr
+                            );
+                            reported_frames = 0;
+
+                            skipped = 0;
+                        }
                     } else {
                         skipped += 1;
                     }
