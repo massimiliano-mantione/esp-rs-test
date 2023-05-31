@@ -1,9 +1,17 @@
 use esp_idf_sys::{
-    self as _, camera_config_t__bindgen_ty_1, camera_config_t__bindgen_ty_2,
-    camera_fb_location_t_CAMERA_FB_IN_PSRAM, camera_grab_mode_t_CAMERA_GRAB_LATEST,
-    framesize_t_FRAMESIZE_QQVGA, ledc_channel_t_LEDC_CHANNEL_0, ledc_timer_t_LEDC_TIMER_0,
-    pixformat_t_PIXFORMAT_YUV422, timeval, ESP_OK,
-}; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
+    // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
+    self as _,
+    camera_config_t__bindgen_ty_1,
+    camera_config_t__bindgen_ty_2,
+    camera_fb_location_t_CAMERA_FB_IN_PSRAM,
+    camera_grab_mode_t_CAMERA_GRAB_LATEST,
+    framesize_t_FRAMESIZE_QQVGA,
+    ledc_channel_t_LEDC_CHANNEL_0,
+    ledc_timer_t_LEDC_TIMER_0,
+    pixformat_t_PIXFORMAT_JPEG,
+    timeval,
+    ESP_OK,
+};
 
 use esp_idf_sys::{
     camera_config_t, esp_camera_deinit, esp_camera_fb_get, esp_camera_fb_return, esp_camera_init,
@@ -28,9 +36,31 @@ const CAMERA_VSYNC_GPIO_NUM: i32 = 6;
 const CAMERA_HREF_GPIO_NUM: i32 = 7;
 const CAMERA_PCLK_GPIO_NUM: i32 = 13;
 
+const XCLK_FREQ_HZ: i32 = 20000000;
+
 fn timeval_usec(t: timeval) -> u64 {
     (t.tv_sec as u64 * 1000000) + (t.tv_usec as u64)
 }
+
+// fn init_display() {
+//     unsafe {
+//         let config = spi_bus_config_t {
+//             __bindgen_anon_1: todo!(),
+//             __bindgen_anon_2: todo!(),
+//             sclk_io_num: todo!(),
+//             __bindgen_anon_3: todo!(),
+//             __bindgen_anon_4: todo!(),
+//             data4_io_num: todo!(),
+//             data5_io_num: todo!(),
+//             data6_io_num: todo!(),
+//             data7_io_num: todo!(),
+//             max_transfer_sz: todo!(),
+//             flags: todo!(),
+//             intr_flags: todo!(),
+//         };
+//         let spi = spi_bus_initialize(host_id, bus_config, dma_chan);
+//     }
+// }
 
 fn main() {
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -54,10 +84,10 @@ fn main() {
         pin_vsync: CAMERA_VSYNC_GPIO_NUM,
         pin_href: CAMERA_HREF_GPIO_NUM,
         pin_pclk: CAMERA_PCLK_GPIO_NUM,
-        xclk_freq_hz: 20000000,
+        xclk_freq_hz: XCLK_FREQ_HZ,
         ledc_timer: ledc_timer_t_LEDC_TIMER_0,
         ledc_channel: ledc_channel_t_LEDC_CHANNEL_0,
-        pixel_format: pixformat_t_PIXFORMAT_YUV422,
+        pixel_format: pixformat_t_PIXFORMAT_JPEG,
         frame_size: framesize_t_FRAMESIZE_QQVGA,
         jpeg_quality: 12,
         fb_count: 3,
@@ -85,6 +115,8 @@ fn main() {
         let mut skipped = 0;
         let mut reported_t = 0;
         let mut reported_frames = 0;
+        let mut fb_len_sum = 0;
+        let mut fb_len_max = 0;
         const REPORT_DT_USEC: u64 = 5000000;
 
         for _ in 0..1000 {
@@ -96,24 +128,29 @@ fn main() {
 
                     if t != previous_t {
                         previous_t = t;
+                        fb_len_sum += fb.len;
+                        fb_len_max = fb_len_max.max(fb.len);
 
                         let dt = t - reported_t;
                         if dt >= REPORT_DT_USEC {
                             reported_t = t;
 
-                            let (frame_dt_avg, fr) = if dt > 0 {
+                            let (frame_dt_avg, fb_len_avg, fr) = if dt > 0 {
                                 (
                                     dt / reported_frames,
+                                    fb_len_sum / (reported_frames as usize),
                                     1000000.0 / ((dt / reported_frames) as f32),
                                 )
                             } else {
-                                (0, 0.0)
+                                (0, 0, 0.0)
                             };
                             println!(
-                                "skipped {} count {} dt {} (fr {})",
-                                skipped, reported_frames, frame_dt_avg, fr
+                                "skipped {} count {} dt {} (fr {}, len avg {} max {})",
+                                skipped, reported_frames, frame_dt_avg, fr, fb_len_avg, fb_len_max
                             );
                             reported_frames = 0;
+                            fb_len_sum = 0;
+                            fb_len_max = 0;
 
                             skipped = 0;
                         }
