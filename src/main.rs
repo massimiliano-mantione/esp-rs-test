@@ -22,7 +22,7 @@ use esp_idf_sys::{
     pixformat_t_PIXFORMAT_JPEG,
     timeval,
     EspError,
-    ESP_OK,
+    ESP_ERR_CAMERA_BASE,
 };
 use log::*;
 
@@ -133,24 +133,8 @@ fn connect_wifi(
     Ok(Box::new(esp_wifi))
 }
 
-fn main() -> Result<(), EspError> {
-    // It is necessary to call this function once. Otherwise some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
-    esp_idf_sys::link_patches();
-
-    // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
-
-    #[allow(unused)]
-    let peripherals = Peripherals::take().unwrap();
-    #[allow(unused)]
-    let pins = peripherals.pins;
-    #[allow(unused)]
-    let sysloop = EspSystemEventLoop::take().unwrap();
-
-    let wifi_connection = connect_wifi(peripherals.modem, sysloop.clone())?;
-
-    println!("Setting up camera");
+fn setup_camera() -> Result<(), EspError> {
+    info!("Setting up camera");
 
     let camera_config = camera_config_t {
         pin_pwdn: CAMERA_PWDN_GPIO_NUM,
@@ -186,14 +170,25 @@ fn main() -> Result<(), EspError> {
     };
 
     unsafe {
-        let err = esp_camera_init(&camera_config);
-        if err != ESP_OK {
-            println!("esp_camera_init {}", err);
-            return Ok(());
-        }
-
+        let res = esp_camera_init(&camera_config);
+        EspError::from(res).map(Err).unwrap_or(Ok(()))?;
         let _s = esp_camera_sensor_get();
+    }
+    Ok(())
+}
 
+fn deinit_camera() -> Result<(), EspError> {
+    unsafe {
+        let res = esp_camera_deinit();
+        EspError::from(res).map(Err).unwrap_or(Ok(()))?;
+    }
+    info!("Camera deinitialized");
+    Ok(())
+}
+
+#[allow(unused)]
+fn test_camera_framerate() -> Result<(), EspError> {
+    unsafe {
         let mut previous_t = 0;
         let mut skipped = 0;
         let mut reported_t = 0;
@@ -227,7 +222,7 @@ fn main() -> Result<(), EspError> {
                             } else {
                                 (0, 0, 0.0)
                             };
-                            println!(
+                            info!(
                                 "skipped {} count {} dt {} (fr {}, len avg {} max {})",
                                 skipped, reported_frames, frame_dt_avg, fr, fb_len_avg, fb_len_max
                             );
@@ -242,16 +237,38 @@ fn main() -> Result<(), EspError> {
                     }
                 }
                 None => {
-                    println!("esp_camera_fb_get failed");
-                    return Ok(());
+                    error!("esp_camera_fb_get failed");
+                    return Err(EspError::from(ESP_ERR_CAMERA_BASE).unwrap());
                 }
             }
             esp_camera_fb_return(fb);
         }
 
-        esp_camera_deinit();
+        Ok(())
     }
+}
 
+fn main() -> Result<(), EspError> {
+    // It is necessary to call this function once. Otherwise some patches to the runtime
+    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
+    esp_idf_sys::link_patches();
+
+    // Bind the log crate to the ESP Logging facilities
+    esp_idf_svc::log::EspLogger::initialize_default();
+
+    #[allow(unused)]
+    let peripherals = Peripherals::take().unwrap();
+    #[allow(unused)]
+    let pins = peripherals.pins;
+    #[allow(unused)]
+    let sysloop = EspSystemEventLoop::take().unwrap();
+
+    let wifi_connection = connect_wifi(peripherals.modem, sysloop.clone())?;
+    setup_camera()?;
+
+    test_camera_framerate()?;
+
+    deinit_camera()?;
     drop(wifi_connection);
     println!("Done.");
     Ok(())
