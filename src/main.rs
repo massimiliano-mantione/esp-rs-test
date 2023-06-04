@@ -1,6 +1,7 @@
 use embedded_svc::{ipv4, wifi::*};
 use esp_idf_hal::peripheral;
 use esp_idf_hal::prelude::Peripherals;
+use esp_idf_svc::errors::EspIOError;
 use esp_idf_svc::ping;
 use esp_idf_svc::{eventloop::EspSystemEventLoop, wifi::*};
 use esp_idf_sys::{
@@ -25,6 +26,7 @@ use esp_idf_sys::{
     ESP_ERR_CAMERA_BASE,
 };
 use log::*;
+use std::time::Duration;
 
 const CAMERA_PWDN_GPIO_NUM: i32 = -1;
 const CAMERA_RESET_GPIO_NUM: i32 = -1;
@@ -248,7 +250,70 @@ fn test_camera_framerate() -> Result<(), EspError> {
     }
 }
 
-fn main() -> Result<(), EspError> {
+fn start_httpd(
+    quit: std::sync::mpsc::SyncSender<()>,
+) -> Result<esp_idf_svc::http::server::EspHttpServer, EspIOError> {
+    use embedded_svc::http::server::Method;
+    use embedded_svc::io::Write;
+    use esp_idf_svc::http::server::EspHttpServer;
+
+    let mut server = EspHttpServer::new(&Default::default())?;
+
+    server
+        .fn_handler("/", Method::Get, |req| {
+            req.into_ok_response()?
+                .write_all("Hello from Rust!".as_bytes())?;
+
+            Ok(())
+        })?
+        .fn_handler("/foo", Method::Get, |_| {
+            Result::Err("Boo, something happened!".into())
+        })?
+        .fn_handler("/bar", Method::Get, |req| {
+            req.into_response(403, Some("No permissions"), &[])?
+                .write_all("You have no permissions to access this page".as_bytes())?;
+
+            Ok(())
+        })?
+        .fn_handler("/quit", Method::Get, move |req| {
+            req.into_ok_response()?
+                .write_all("Quit request received".as_bytes())?;
+            quit.send(()).unwrap();
+            Ok(())
+        })?;
+
+    Ok(server)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MainError {
+    Base(EspError),
+    IO(EspIOError),
+}
+
+impl std::fmt::Display for MainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MainError::Base(err) => err.fmt(f),
+            MainError::IO(err) => err.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for MainError {}
+
+impl From<EspError> for MainError {
+    fn from(err: EspError) -> Self {
+        Self::Base(err)
+    }
+}
+impl From<EspIOError> for MainError {
+    fn from(err: EspIOError) -> Self {
+        Self::IO(err)
+    }
+}
+
+fn main() -> Result<(), MainError> {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_sys::link_patches();
@@ -268,7 +333,17 @@ fn main() -> Result<(), EspError> {
 
     test_camera_framerate()?;
 
+    let (quit_sender, quit_receiver) = std::sync::mpsc::sync_channel::<()>(1);
+    let httpd_server = start_httpd(quit_sender)?;
+    quit_receiver.recv().unwrap();
+
+    for s in 0..3 {
+        info!("Shutting down in {} secs", 3 - s);
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
     deinit_camera()?;
+    drop(httpd_server);
     drop(wifi_connection);
     println!("Done.");
     Ok(())
