@@ -1,22 +1,30 @@
+use embedded_svc::{ipv4, wifi::*};
+use esp_idf_hal::peripheral;
+use esp_idf_hal::prelude::Peripherals;
+use esp_idf_svc::ping;
+use esp_idf_svc::{eventloop::EspSystemEventLoop, wifi::*};
 use esp_idf_sys::{
     // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
     self as _,
+    camera_config_t,
     camera_config_t__bindgen_ty_1,
     camera_config_t__bindgen_ty_2,
     camera_fb_location_t_CAMERA_FB_IN_PSRAM,
     camera_grab_mode_t_CAMERA_GRAB_LATEST,
+    esp_camera_deinit,
+    esp_camera_fb_get,
+    esp_camera_fb_return,
+    esp_camera_init,
+    esp_camera_sensor_get,
     framesize_t_FRAMESIZE_QQVGA,
     ledc_channel_t_LEDC_CHANNEL_0,
     ledc_timer_t_LEDC_TIMER_0,
     pixformat_t_PIXFORMAT_JPEG,
     timeval,
+    EspError,
     ESP_OK,
 };
-
-use esp_idf_sys::{
-    camera_config_t, esp_camera_deinit, esp_camera_fb_get, esp_camera_fb_return, esp_camera_init,
-    esp_camera_sensor_get,
-};
+use log::*;
 
 const CAMERA_PWDN_GPIO_NUM: i32 = -1;
 const CAMERA_RESET_GPIO_NUM: i32 = -1;
@@ -38,34 +46,109 @@ const CAMERA_PCLK_GPIO_NUM: i32 = 13;
 
 const XCLK_FREQ_HZ: i32 = 20000000;
 
+#[allow(dead_code)]
+const SSID: &str = env!("RUST_ESP32_STD_DEMO_WIFI_SSID");
+#[allow(dead_code)]
+const PASS: &str = env!("RUST_ESP32_STD_DEMO_WIFI_PASS");
+
 fn timeval_usec(t: timeval) -> u64 {
     (t.tv_sec as u64 * 1000000) + (t.tv_usec as u64)
 }
 
-// fn init_display() {
-//     unsafe {
-//         let config = spi_bus_config_t {
-//             __bindgen_anon_1: todo!(),
-//             __bindgen_anon_2: todo!(),
-//             sclk_io_num: todo!(),
-//             __bindgen_anon_3: todo!(),
-//             __bindgen_anon_4: todo!(),
-//             data4_io_num: todo!(),
-//             data5_io_num: todo!(),
-//             data6_io_num: todo!(),
-//             data7_io_num: todo!(),
-//             max_transfer_sz: todo!(),
-//             flags: todo!(),
-//             intr_flags: todo!(),
-//         };
-//         let spi = spi_bus_initialize(host_id, bus_config, dma_chan);
-//     }
-// }
+fn ping_address(ip: ipv4::Ipv4Addr) -> Result<(), EspError> {
+    info!("About to do some pings for {:?}", ip);
 
-fn main() {
+    let ping_summary = ping::EspPing::default().ping(ip, &Default::default())?;
+    if ping_summary.transmitted != ping_summary.received {
+        error!("Pinging IP {} resulted in timeouts", ip);
+    }
+
+    info!("Pinging done");
+
+    Ok(())
+}
+
+fn connect_wifi(
+    modem: impl peripheral::Peripheral<P = esp_idf_hal::modem::Modem> + 'static,
+    sysloop: EspSystemEventLoop,
+) -> Result<Box<EspWifi<'static>>, EspError> {
+    let mut esp_wifi = EspWifi::new(modem, sysloop.clone(), None)?;
+
+    let mut wifi = BlockingWifi::wrap(&mut esp_wifi, sysloop)?;
+
+    wifi.set_configuration(&Configuration::Client(ClientConfiguration::default()))?;
+
+    info!("Starting wifi...");
+
+    wifi.start()?;
+
+    info!("Scanning...");
+
+    let ap_infos = wifi.scan()?;
+
+    let ours = ap_infos.into_iter().find(|a| a.ssid == SSID);
+
+    let channel = if let Some(ours) = ours {
+        info!(
+            "Found configured access point {} on channel {}",
+            SSID, ours.channel
+        );
+        Some(ours.channel)
+    } else {
+        info!(
+            "Configured access point {} not found during scanning, will go with unknown channel",
+            SSID
+        );
+        None
+    };
+
+    wifi.set_configuration(&Configuration::Mixed(
+        ClientConfiguration {
+            ssid: SSID.into(),
+            password: PASS.into(),
+            channel,
+            ..Default::default()
+        },
+        AccessPointConfiguration {
+            ssid: "aptest".into(),
+            channel: channel.unwrap_or(1),
+            ..Default::default()
+        },
+    ))?;
+
+    info!("Connecting wifi...");
+
+    wifi.connect()?;
+
+    info!("Waiting for DHCP lease...");
+
+    wifi.wait_netif_up()?;
+
+    let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
+
+    info!("Wifi DHCP info: {:?}", ip_info);
+
+    ping_address(ip_info.subnet.gateway)?;
+
+    Ok(Box::new(esp_wifi))
+}
+
+fn main() -> Result<(), EspError> {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_sys::link_patches();
+
+    // Bind the log crate to the ESP Logging facilities
+    esp_idf_svc::log::EspLogger::initialize_default();
+
+    #[allow(unused)]
+    let peripherals = Peripherals::take().unwrap();
+    #[allow(unused)]
+    let pins = peripherals.pins;
+    #[allow(unused)]
+    let sysloop = EspSystemEventLoop::take().unwrap();
+
+    let wifi_connection = connect_wifi(peripherals.modem, sysloop.clone())?;
 
     println!("Setting up camera");
 
@@ -106,7 +189,7 @@ fn main() {
         let err = esp_camera_init(&camera_config);
         if err != ESP_OK {
             println!("esp_camera_init {}", err);
-            return;
+            return Ok(());
         }
 
         let _s = esp_camera_sensor_get();
@@ -160,7 +243,7 @@ fn main() {
                 }
                 None => {
                     println!("esp_camera_fb_get failed");
-                    return;
+                    return Ok(());
                 }
             }
             esp_camera_fb_return(fb);
@@ -169,5 +252,7 @@ fn main() {
         esp_camera_deinit();
     }
 
+    drop(wifi_connection);
     println!("Done.");
+    Ok(())
 }

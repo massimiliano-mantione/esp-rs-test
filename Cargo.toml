@@ -16,7 +16,14 @@ opt-level = "z"
 pio = ["esp-idf-sys/pio"]
 
 [dependencies]
-esp-idf-sys = { version = "0.32.1", features = ["binstart"] }
+esp-idf-sys = { version = "0.33", features = ["binstart"] }
+esp-idf-svc = "0.46"
+esp-idf-hal = "0.41"
+embedded-svc = "0.25"
+embedded-hal = "0.2"
+embedded-graphics = "0.7"
+log = "0.4"
+url = "2"
 
 [[package.metadata.esp-idf-sys.extra_components]]
 component_dirs = ["components"]
@@ -28,21 +35,20 @@ bindings_header = "src/bindings.h"
 #esp_idf_sdkconfig_defaults = ["sdkconfig.defaults"]
 #esp_idf_components = ["esp_wifi", "spiffs", "vfs", "esp_http_server", "bootloader", "esp_adc_cal", "hal", "esp_websocket_client"]
 
-esp-idf-hal = { version = "0.40.1", features = [
-    "default",
-    "embassy-sync",
-    "critical-section",
-    "edge-executor"
-]}
-esp-idf-svc = { version = "0.45.0", features = [
-    "std",
-    "nightly",
-    "experimental",
-    "embassy-time-driver",
-    "embassy-time-isr-queue",
-    "alloc"
-]}
- 
+#esp-idf-hal = { version = "0.41.0", features = [
+#    "default",
+#    "embassy-sync",
+#    "critical-section",
+#    "edge-executor"
+#]}
+#esp-idf-svc = { version = "0.46.0", features = [
+#    "std",
+#    "nightly",
+#    "experimental",
+#    "embassy-time-driver",
+#    "embassy-time-isr-queue",
+#    "alloc"
+#]}
 
 
 [build-dependencies]
