@@ -1,3 +1,6 @@
+use embedded_svc::http::server::{Connection, Request};
+use embedded_svc::io::Io;
+use embedded_svc::io::Write;
 use embedded_svc::{ipv4, wifi::*};
 use esp_idf_hal::peripheral;
 use esp_idf_hal::prelude::Peripherals;
@@ -11,6 +14,7 @@ use esp_idf_sys::{
     camera_config_t__bindgen_ty_1,
     camera_config_t__bindgen_ty_2,
     camera_fb_location_t_CAMERA_FB_IN_PSRAM,
+    camera_fb_t,
     camera_grab_mode_t_CAMERA_GRAB_LATEST,
     esp_camera_deinit,
     esp_camera_fb_get,
@@ -250,11 +254,30 @@ fn test_camera_framerate() -> Result<(), EspError> {
     }
 }
 
+fn write_fb_into_response<C>(req: Request<C>, fb: *mut camera_fb_t) -> Result<(), EspIOError>
+where
+    C: Connection,
+    EspIOError: From<<C as Io>::Error>,
+{
+    unsafe {
+        match fb.as_ref() {
+            Some(fb) => {
+                req.into_response(200, None, &[("Content-Type", "image/jpeg")])?
+                    .write_all(std::slice::from_raw_parts(fb.buf, fb.len))?;
+            }
+            None => {
+                req.into_response(500, Some("Camera error"), &[])?
+                    .write_all("cannot get frame from camera".as_bytes())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn start_httpd(
     quit: std::sync::mpsc::SyncSender<()>,
 ) -> Result<esp_idf_svc::http::server::EspHttpServer, EspIOError> {
     use embedded_svc::http::server::Method;
-    use embedded_svc::io::Write;
     use esp_idf_svc::http::server::EspHttpServer;
 
     let mut server = EspHttpServer::new(&Default::default())?;
@@ -264,6 +287,16 @@ fn start_httpd(
             req.into_ok_response()?
                 .write_all("Hello from Rust!".as_bytes())?;
 
+            Ok(())
+        })?
+        .fn_handler("/snap", Method::Get, |req| {
+            unsafe {
+                let fb = esp_camera_fb_get();
+                if let Err(err) = write_fb_into_response(req, fb) {
+                    error!("error writing fb into response: {}", err);
+                }
+                esp_camera_fb_return(fb);
+            }
             Ok(())
         })?
         .fn_handler("/foo", Method::Get, |_| {
