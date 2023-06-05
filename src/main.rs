@@ -32,6 +32,9 @@ use esp_idf_sys::{
 use log::*;
 use std::time::Duration;
 
+// use jpeg_decoder::Decoder;
+// use zune_jpeg::JpegDecoder;
+
 const CAMERA_PWDN_GPIO_NUM: i32 = -1;
 const CAMERA_RESET_GPIO_NUM: i32 = -1;
 const CAMERA_XCLK_GPIO_NUM: i32 = 15;
@@ -207,6 +210,18 @@ fn test_camera_framerate() -> Result<(), EspError> {
             let fb = esp_camera_fb_get();
             match fb.as_ref() {
                 Some(fb) => {
+                    // let bytes = std::slice::from_raw_parts(fb.buf, fb.len);
+
+                    // let mut decoder = Decoder::new(bytes);
+                    // if let Err(err) = decoder.decode() {
+                    //     error!("error decoding frame: {}", err);
+                    // }
+
+                    // let mut _decoder = Box::new(JpegDecoder::new(bytes));
+                    // if let Err(err) = decoder.decode() {
+                    //     error!("error decoding frame: {}", err);
+                    // }
+
                     let t = timeval_usec(fb.timestamp);
                     reported_frames += 1;
 
