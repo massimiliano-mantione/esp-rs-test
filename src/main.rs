@@ -1,3 +1,6 @@
+mod zune_core;
+mod zune_jpeg;
+
 use embedded_svc::http::server::{Connection, Request};
 use embedded_svc::io::Io;
 use embedded_svc::io::Write;
@@ -31,9 +34,7 @@ use esp_idf_sys::{
 };
 use log::*;
 use std::time::Duration;
-
-// use jpeg_decoder::Decoder;
-// use zune_jpeg::JpegDecoder;
+use zune_jpeg::JpegDecoder;
 
 const CAMERA_PWDN_GPIO_NUM: i32 = -1;
 const CAMERA_RESET_GPIO_NUM: i32 = -1;
@@ -81,6 +82,8 @@ fn connect_wifi(
     modem: impl peripheral::Peripheral<P = esp_idf_hal::modem::Modem> + 'static,
     sysloop: EspSystemEventLoop,
 ) -> Result<Box<EspWifi<'static>>, EspError> {
+    info!("Setting up wifi");
+
     let mut esp_wifi = EspWifi::new(modem, sysloop.clone(), None)?;
 
     let mut wifi = BlockingWifi::wrap(&mut esp_wifi, sysloop)?;
@@ -183,6 +186,8 @@ fn setup_camera() -> Result<(), EspError> {
         EspError::from(res).map(Err).unwrap_or(Ok(()))?;
         let _s = esp_camera_sensor_get();
     }
+
+    info!("Camera setup done");
     Ok(())
 }
 
@@ -210,17 +215,17 @@ fn test_camera_framerate() -> Result<(), EspError> {
             let fb = esp_camera_fb_get();
             match fb.as_ref() {
                 Some(fb) => {
-                    // let bytes = std::slice::from_raw_parts(fb.buf, fb.len);
+                    let bytes = std::slice::from_raw_parts(fb.buf, fb.len);
 
                     // let mut decoder = Decoder::new(bytes);
                     // if let Err(err) = decoder.decode() {
                     //     error!("error decoding frame: {}", err);
                     // }
 
-                    // let mut _decoder = Box::new(JpegDecoder::new(bytes));
-                    // if let Err(err) = decoder.decode() {
-                    //     error!("error decoding frame: {}", err);
-                    // }
+                    let mut decoder = Box::new(JpegDecoder::new(bytes));
+                    if let Err(err) = decoder.decode() {
+                        error!("error decoding frame: {}", err);
+                    }
 
                     let t = timeval_usec(fb.timestamp);
                     reported_frames += 1;
@@ -365,6 +370,8 @@ fn main() -> Result<(), MainError> {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_sys::link_patches();
+
+    info!("Main task started");
 
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
